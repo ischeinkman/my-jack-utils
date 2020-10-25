@@ -20,6 +20,7 @@
 #include <unistd.h>
 #endif
 
+#include "audio_framebuffer.h"
 #include "sigwrapping.h"
 
 #define PI (3.14159274101257324f)
@@ -30,13 +31,14 @@ typedef struct AppState {
     jack_time_t start_usecs;
     jack_client_t* client;
     jack_port_t* output_port;
+    AudioReader buff;
 } AppState;
 
-Sample waveform(jack_time_t usecs) {
-    jack_time_t freq = 440;                     // waves/sec
-    jack_time_t seconds_frac = usecs % 1000000; // microseconds into current second
-    jack_time_t fraced = seconds_frac * freq;   // fraction into the current wave number * 10**6
-    return (Sample)(0.05 * sin(2.0 * PI * ((float) fraced) / (1000000.0)));
+Sample waveform_generator(size_t cur_frame, jack_nframes_t sample_rate) {
+    size_t goal_frq = 440;
+    size_t samples_into_wave = ((cur_frame % sample_rate) * goal_frq) % sample_rate;
+    Sample raw_wave = sin(2.0 * PI * ((float)samples_into_wave) / ((float) sample_rate) );
+    return 0.005 * raw_wave;
 }
 
 int process(jack_nframes_t n_frames, void* arg) {
@@ -57,15 +59,7 @@ int process(jack_nframes_t n_frames, void* arg) {
     if (res != 0) {
         return res;
     }
-
-    jack_time_t buffer_usecs = nxt_usecs - cur_usecs;
-    double usecs_per_frame = ((double) buffer_usecs) / ((double) n_frames);
-    for (uint64_t idx = 0; idx < n_frames; idx++) {
-        jack_time_t idx_usecs = cur_usecs + (jack_time_t)((double) idx * usecs_per_frame);
-        buffer[idx] = waveform(idx_usecs);
-    }
-
-    return res;
+    return read_buffer(&state->buff, cur_frames, n_frames, buffer);
 }
 
 int main() {
@@ -93,32 +87,37 @@ int main() {
         jack_client_close(client);
         return -1;
     }
+    AudioBuffer buff =
+        AudioBuffer_from_cb(&waveform_generator, (size_t) jack_get_sample_rate(client), jack_get_sample_rate(client));
+    BufferCursor cursor = BufferCursor_new(jack_frame_time(client));
+
     state_ptr->client = client;
     state_ptr->output_port = output_port;
     state_ptr->start_usecs = jack_get_time();
+    state_ptr->buff = (AudioReader){buff, cursor};
 
     res = jack_set_process_callback(client, process, state_ptr);
     if (res != 0) {
         fprintf(stderr, "Failed setting process callback. Error code: 0x%x\n", res);
-        free(state_ptr);
         jack_port_unregister(client, output_port);
         jack_client_close(client);
+        free(state_ptr);
         return -1;
     }
 
     res = jack_activate(client);
     if (res != 0) {
         fprintf(stderr, "Failed activating client. Error code: 0x%x\n", res);
-        free(state_ptr);
         jack_port_unregister(client, output_port);
         jack_client_close(client);
+        free(state_ptr);
         return -1;
     }
     register_all_handlers();
     sleep(-1);
     printf("Exiting with current code: %d.\n", res);
-    free(state_ptr);
     jack_port_unregister(client, output_port);
     jack_client_close(client);
+    free(state_ptr);
     return reraise();
 }
