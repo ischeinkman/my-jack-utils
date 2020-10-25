@@ -20,6 +20,8 @@
 #include <unistd.h>
 #endif
 
+#include "sigwrapping.h"
+
 #define PI (3.14159274101257324f)
 
 typedef jack_default_audio_sample_t Sample;
@@ -64,27 +66,6 @@ int process(jack_nframes_t n_frames, void* arg) {
     }
 
     return res;
-}
-
-typedef void SignalCb(int);
-typedef struct SignalCbList {
-    SignalCb* on_int;
-    SignalCb* on_term;
-} SignalCbList;
-
-static sig_atomic_t cur_sig;
-
-void on_signal(int sig) { cur_sig = sig; }
-SignalCbList register_sig_handler() {
-    cur_sig = 0;
-    SignalCbList retvl;
-    retvl.on_int = signal(SIGINT, on_signal);
-    retvl.on_term = signal(SIGTERM, on_signal);
-    return retvl;
-}
-void unregister_sig_handler(SignalCbList prev_cbs) {
-    signal(SIGTERM, prev_cbs.on_term);
-    signal(SIGINT, prev_cbs.on_int);
 }
 
 int main() {
@@ -133,15 +114,11 @@ int main() {
         jack_client_close(client);
         return -1;
     }
-    SignalCbList sig_handlers = register_sig_handler();
+    register_all_handlers();
     sleep(-1);
-    unregister_sig_handler(sig_handlers);
-    printf("Exiting.\n");
+    printf("Exiting with current code: %d.\n", res);
     free(state_ptr);
     jack_port_unregister(client, output_port);
     jack_client_close(client);
-    if (cur_sig != 0) {
-        raise(cur_sig);
-    }
-    return res;
+    return reraise();
 }
