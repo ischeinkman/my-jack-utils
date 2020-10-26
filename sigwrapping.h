@@ -1,10 +1,13 @@
 #pragma once
 
 #include <signal.h>
+#include <stdbool.h>
 
-static sig_atomic_t prev_signal;
+static volatile sig_atomic_t prev_signal;
 
 static void on_signal(int sig) { prev_signal = sig; }
+
+static bool has_signal() { return prev_signal != 0; }
 
 static inline void register_handler(int sig) {
     prev_signal = 0;
